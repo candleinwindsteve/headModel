@@ -1,2 +1,5 @@
 # Data files
 *.mat
+
+# Matlab backup files
+*.m~
