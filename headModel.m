@@ -91,6 +91,8 @@ classdef headModel < handle
             if nargin < 4, figureTitle = '';end
             if nargin < 5, autoscale = false;end
             if nargin < 6, fps = 30;end
+            if isa(J,'gpuArray'), J = gather(J);end
+            if isa(V,'gpuArray'), V = gather(V);end
             hFigureObj = currentSourceViewer(obj,J,V,figureTitle, autoscale, fps);
         end
         %%
@@ -260,7 +262,7 @@ classdef headModel < handle
         end
         %%
         function Aff = warpToTemplate(obj,templateObj,regType)
-            % Estimates a mapping thead model to a template's head using channel locations.
+            % Estimates a mapping from this head to a template's head.
             % It uses Dirk-Jan Kroon's nonrigid_version23 toolbox.
             %
             % For more details see: http://www.mathworks.com/matlabcentral/fileexchange/20057-b-spline-grid-image-and-point-based-registration
@@ -547,22 +549,24 @@ classdef headModel < handle
             s2 = diag(S).^2;
         end
         %%
-        function [Ut, s2,iHsqrtV, Klb, B, Hsqrt] = svd4sourceLocLB(obj,number_of_basis)
+        function [Ut, s2,iHsqrtV, Klb, B, Hsqrt] = svd4sourceLocLB(obj,numberOfBasis)
             persistent P
-            if nargin < 2, number_of_basis = 128;end
-            if ~isempty(obj.K)
+            if nargin < 2, numberOfBasis = 128;end
+            if isempty(obj.K)
                 error('Need to compute leead field matrix first!');
             end
             K = obj.K;
             L = obj.L;
             %--
-            if isempty(P) || size(P,2) ~= number_of_basis+2
+            if isempty(P) || size(P,2) ~= numberOfBasis+2
                 [A,C] = FEM(obj.cortex);
-                [P,~] = eigs(C,A,number_of_basis+2,'sm');
+                [P,~] = eigs(C,A,numberOfBasis+10,'sm');
             end
-            B = -P(:,1:number_of_basis);
+            B = -P(:,1:numberOfBasis);
             %--
-            H = B'*(L'*L)*B;
+            LtL = sqrtm(full(L'*L));
+            H = B'*LtL*B;
+            H = sqrtm(full(H*H'));
             Hsqrt = chol(H);
             %--
             Kstd = bsxfun(@rdivide,K,std(K,[],1)+eps);
@@ -594,6 +598,7 @@ classdef headModel < handle
                 disp('Doing my best to open the surface.')
                 n = size(sourceSpace.vertices,1);
                 rmIndices = fix(n/2)-maxNumVertices2rm/2:fix(n/2)+maxNumVertices2rm/2;
+                [sourceSpace.vertices, sourceSpace.faces] = geometricTools.openSurface(sourceSpace.vertices,sourceSpace.faces,rmIndices);
             end
             dim = size(K);
             L(rmIndices,:) = [];
@@ -611,7 +616,15 @@ classdef headModel < handle
        %%
         function indices = indices4Structure(obj,structName)
             if nargin < 2, error('Not enough input arguments.');end
-            ind = find(ismember(obj.atlas.label,structName));
+            if iscellstr(structName)
+                ind = [];
+                for k=1:length(structName)
+                    ind = [ind find(ismember(obj.atlas.label,structName{k}))];
+                end
+            else
+                ind = find(ismember(obj.atlas.label,structName));
+            end
+            ind = ind(:);
             if isempty(ind), error('The structure you want to remove is not defined in this atlas.');end
             indices = bsxfun(@eq,obj.atlas.colorTable,ind');
         end
@@ -631,15 +644,14 @@ classdef headModel < handle
        %%
         function [FP,S] = getForwardProjection(obj,xyz)
             if nargin < 2, error('Not enough input arguments.');end
-            if isempty(obj.atlas) || isempty(obj.surfaces), error('Head model or atlas are missing.');end
-            if ~exist(obj.surfaces,'file'), error('Head model is missing.');end
+            if isempty(obj.atlas), error('The atlas is missing.');end
             if isempty(obj.K), error('Need to compute lead field first!');end
             [~,~,loc] = geometricTools.nearestNeighbor(obj.cortex.vertices,xyz);
             K = obj.K;
             dim = size(K);
             if size(obj.cortex.vertices,1) == dim(2)/3, K = reshape(K,[dim(1) dim(2)/3 3]);end
             FP = sum(K(:,loc,:),3);
-            S = geometricTools.simulateGaussianSource(obj.cortex.vertices,xyz,16);
+            S = geometricTools.simulateGaussianSource(obj.cortex.vertices,xyz,0.016);
         end
        %%
         function hFigureObj = plotDipoles(obj,xyz,ecd,dipoleLabel,figureTitle)

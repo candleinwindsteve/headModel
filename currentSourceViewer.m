@@ -27,6 +27,7 @@ classdef currentSourceViewer < handle
     properties(GetAccess=private,Hidden)
         Nframes
         is3d
+        DT
     end
     methods
         function obj = currentSourceViewer(hmObj,J,V,figureTitle,autoscale, fps)
@@ -104,7 +105,7 @@ classdef currentSourceViewer < handle
                 normals = J;
             else
                 Jm = J;
-                normals = geometricTools.getSurfaceNormals(obj.hmObj.cortex.vertices,obj.hmObj.cortex.faces,false);    
+                normals = geometricTools.getSurfaceNormals(obj.hmObj.cortex.vertices,obj.hmObj.cortex.faces);    
             end
             obj.sourceMagnitud = Jm;
             obj.sourceOrientation = J;
@@ -131,7 +132,7 @@ classdef currentSourceViewer < handle
                     'facelighting','phong','LineStyle','none','FaceAlpha',.85,'Parent',obj.hAxes,'Visible','off');
                 obj.scalpData = [];
             else
-                W = geometricTools.localGaussianInterpolator(obj.hmObj.channelSpace,obj.hmObj.scalp.vertices,32);
+                W = geometricTools.localGaussianInterpolator(obj.hmObj.channelSpace,obj.hmObj.scalp.vertices);
                 obj.scalpData = W*V;
                 obj.hScalp = patch('vertices',obj.hmObj.scalp.vertices,'faces',obj.hmObj.scalp.faces,'FaceVertexCData',obj.scalpData(:,1),...
                     'FaceColor','interp','FaceLighting','phong','LineStyle','none','FaceAlpha',0.85,'SpecularColorReflectance',0,...
@@ -227,20 +228,18 @@ classdef currentSourceViewer < handle
         end
         %%
         function output_txt = showLabel(obj,event_obj)
-            persistent DT
             if strcmp(obj.dcmHandle.Enable,'off'),return;end
-            if strcmp(get(obj.hVector,'Visible'),'on')
-                set(obj.hVector,'Visible','off');
-                set(obj.hCortex,'FaceAlpha',1);
-            end
-            if isempty(DT)
+            if isempty(obj.DT)
                 vertices = obj.hmObj.cortex.vertices;
-                DT = delaunayTriangulation(vertices(:,1),vertices(:,2),vertices(:,3));
+                obj.DT = delaunayTriangulation(vertices(:,1),vertices(:,2),vertices(:,3));
             end
             pos = get(event_obj,'Position');
-            loc = nearestNeighbor(DT, pos);
-            output_txt = obj.streamObj.atlas.label{obj.streamObj.atlas.colorTable(loc)};
-            drawnow
+            loc = nearestNeighbor(obj.DT, pos);
+            try
+                output_txt = obj.hmObj.atlas.label{obj.hmObj.atlas.colorTable(loc)};
+            catch
+                output_txt = 'No labeled';
+            end
         end
         %%
         function play(obj,~,~)

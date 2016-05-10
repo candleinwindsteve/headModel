@@ -37,29 +37,20 @@ classdef geometricTools
         function [Aff,Sn, scale] = affineMapping(S,T)
             % S: source space
             % T: target space
-            % S = [sx1 sy1 sz1; sx2 sy2 sz2; ... sxk syn szk]
-            % T = [tx1 ty1 tz1; tx2 ty2 tz2; ... txk tyn tzk]
-            %
-            % d(Aff) = min frobenius(T -S* Aff')
-            % Sn = S*Aff';
-            
-            [~,~,transform] = procrustes(T,S);
-            scale = transform.b;
-            Aff = [[transform.b*transform.T;transform.c(1,:)] [0;0;0;1]]';
-            Sn = geometricTools.applyAffineMapping(S,Aff);
+            scale = (norm(T)/norm(S))^2;
+            S(:,end+1) = 1;
+            T(:,end+1)=1;
+            Aff = (S'*S\S'*T)';
+            Sn = geometricTools.applyAffineMapping(S(:,1:3),Aff);
         end
         %%
-        function T = applyAffineMapping(S,M)
-            % [T 1] = [S 1]*M';
-            T = [S ones(size(S,1),1)]*M';
+        function T = applyAffineMapping(S,Aff)
+            T = [S ones(size(S,1),1)]*Aff';
             T(:,4) = [];
         end
         %%
         function [def,spacing,offset,SgridWarped] = bSplineMapping(S,T,Sgrid,options)
-            if nargin < 4,
-                options.Verbose = false;
-                options.MaxRef = 5;
-            end
+            if nargin < 4, options = struct('Verbose',false,'MaxRef',5);end
             mn = min(Sgrid);
             Smn = bsxfun(@minus,S,mn);
             dim = max(Sgrid) - mn;
@@ -75,17 +66,15 @@ classdef geometricTools
             SgridWarped = bsxfun(@plus,SmnWarped,offset);
         end
         %%
-        function [neighbors,D,loc] = nearestNeighbor(vertices,T)
-            if exist('DelaunayTri','file')
-                 dt = DelaunayTri(vertices(:,1),vertices(:,2),vertices(:,3)); %#ok
-            else dt = delaunayTriangulation(vertices(:,1),vertices(:,2),vertices(:,3));
+        function [neighbors,D,loc] = nearestNeighbor(S,T,K)
+            if nargin < 3, K=1;end
+            D = zeros(size(S,1),1);
+            loc = zeros(size(S,1),1);
+            for k=1:size(S,1)
+                dk = sqrt(sum((bsxfun(@minus,S(k,:),T)).^2,2));
+                [D(k),loc(k)] = min(dk);
             end
-            try [loc,D] = nearestNeighbor(dt, T);
-            catch
-                loc = nearestNeighbor(dt, T);
-                D = sqrt(sum((vertices(loc,:)-T).^2,2));
-            end
-            neighbors = vertices(loc,:);
+            neighbors = T(loc(1:K),:);
         end
         %%
         function Yi = ridgeInterpolation(vertices,faces,elec,Y)
@@ -129,9 +118,16 @@ classdef geometricTools
             if nargin < 3, h = 0.1;end
             J = geometricTools.localGaussianInterpolator(X,X0,h)';
         end
+        function W = linearInterpolator(X,Xi)
+            X = X';
+            Xi = Xi';
+            W = ridgeGCV(Xi,X,speye(size(X,2)),100,0);
+            W = W';
+        end
         function W = localGaussianInterpolator(X,Xi,h,normalize)
-            if nargin < 3, h = 0.1;end
+            if nargin < 3, h = 0.1*sqrt(mean(sum(X.^2)));end
             if nargin < 4, normalize = false;end
+            if isempty(h), h = 0.1*sqrt(mean(sum(X.^2)));end
             N = size(Xi,1);
             M = size(X,1);
             W = zeros(N,M);
@@ -168,20 +164,23 @@ classdef geometricTools
             end
         end
         %%
-        function Yi = localGaussianScatterInterpolator(X,Y,Xi)
+        function Yi = scatterInterpolator(X,Y,Xi)
             n = size(Y,2);
+            if exist('TriScatteredInterp','class')
+                interpfunct = @TriScatteredInterp;
+            else
+                interpfunct = @scatteredInterpolant;
+            end
             if n==1
-                F = TriScatteredInterp(X(:,1),X(:,2),X(:,3),Y,'nearest');
+                F = interpfunct(X(:,1),X(:,2),X(:,3),Y,'nearest');
                 Yi = F(Xi(:,1),Xi(:,2),Xi(:,3));
             else
                 Yi = zeros(size(Xi,1),n);
                 for it=1:n
-                    F = TriScatteredInterp(X(:,1),X(:,2),X(:,3),Y(:,it),'nearest');
+                    F = interpfunct(X(:,1),X(:,2),X(:,3),Y(:,it),'nearest');
                     Yi(:,it) = F(Xi(:,1),Xi(:,2),Xi(:,3));
                 end
             end
-            W = geometricTools.localGaussianInterpolator(Xi,Xi,16);
-            Yi = W*Yi;
         end
         %%
         function [rVertices,rFaces] = resampleSurface(vertices,faces,decimationPercent)
@@ -514,6 +513,50 @@ classdef geometricTools
             end
         end
         %%
+        function labels = labelBrainStormSurface(vertices,faces,atlasFileNii)
+            if ~exist('spm_vol','file')
+                error('This function needs SPM (http://www.fil.ion.ucl.ac.uk/spm/software/spm12/)')
+            end
+            V = spm_vol(atlasFileNii);
+            mri = load('bs_mri.mat');
+            mri.Cube = spm_read_vols(V);
+            d = abs(diag(V.mat));
+            mri.Voxsize = d(1:3)';
+            vox = cs_convert(mri, 'scs', 'voxel', vertices);
+            [x,y,z] = ndgrid(1:V.dim(1),1:V.dim(2),1:V.dim(3));
+            xyz = [x(:) y(:) z(:)];
+            F = scatteredInterpolant(xyz,mri.Cube(:),'nearest');
+            labels = F(vox);
+            ind = find(labels==0);
+            coord = round(vox(ind,:));
+            hwait = waitbar(0,'Correcting mislabeled vertices...');
+            for k=1:length(ind)
+                nei = any(faces == ind(k),2);
+                nei = faces(nei,:);
+                nei = setdiff(nei(:),ind(k));
+                val = F(vox(nei,:));
+                val = nonzeros(val);
+                if ~isempty(val)
+                    nelem = hist(val,length(val));
+                    [~,loc] = max(nelem);
+                    labels(ind(k)) = val(loc);
+                else
+                    for h=1:10
+                        nei = -h:h;
+                        val = mri.Cube(coord(k,1)+nei,coord(k,2)+nei,coord(k,3)+nei);
+                        val = nonzeros(val(:));
+                        if ~isempty(val)
+                            nelem = hist(val,length(val));
+                            [~,loc] = max(nelem);
+                            labels(ind(k)) = val(loc);
+                            break
+                        end
+                    end
+                end                        
+                waitbar(k/length(ind),hwait);
+            end
+            close(hwait);
+        end
         function atlas = labelSurface(Surf,imgAtlasfile, txtAtlasLabel,maxColorValue)
             if nargin < 4, maxColorValue = 90;end
             % Atlas
@@ -521,13 +564,17 @@ classdef geometricTools
             A = spm_read_vols(v);
             A(A>maxColorValue) = 0;
             indNonZero = A(:)~=0;
+            A(isnan(A(:))) = 0;
+            A(:,:,1) = 0;
+            A(:,1,:) = 0;
+            A(1,:,:) = 0;
             colorTable = A(indNonZero);
             [x,y,z] = ndgrid(1:v.dim(1),1:v.dim(2),1:v.dim(3));
             M = v.mat;
             X = [x(:) y(:) z(:) ones(numel(x),1)]*M';
             X = X(indNonZero,1:3);           
             clear x y z
-            F = TriScatteredInterp(X,colorTable,'nearest');
+            F = scatteredInterpolant(X,colorTable,'nearest');
             n = size(Surf.vertices,1);
             labelsValue = F(Surf.vertices);
             colorTable = labelsValue;
@@ -545,12 +592,17 @@ classdef geometricTools
             waitbar(1,hwait);
             close(hwait);
             atlas.colorTable = labelsValue;
-            atlas.label = textfile2cell(txtAtlasLabel);
-            atlas.label = atlas.label(1:max(atlas.colorTable));
-            for it=1:length(atlas.label)
-                ind = find(atlas.label{it} == ' ');
-                atlas.label{it} = atlas.label{it}(ind(1)+1:ind(end)-1);
-            end
+            if ~iscellstr(txtAtlasLabel)
+                atlas.label = textfile2cell(txtAtlasLabel);
+                atlas.label = atlas.label(1:max(atlas.colorTable));
+                for it=1:length(atlas.label)
+                    ind = find(atlas.label{it} == ' ');
+                    atlas.label{it} = atlas.label{it}(ind(1)+1:ind(end)-1);
+                end
+            else
+                atlas.label = txtAtlasLabel;
+            end 
+            
         end
         %%
         function X = projectOntoUnitarySphere(X)

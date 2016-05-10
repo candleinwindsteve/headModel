@@ -119,8 +119,8 @@ classdef headModelViewerHandle < handle
             % scalp
             skinColor = [1,.75,.65];
             obj.hScalp = patch('vertices',obj.hmObj.scalp.vertices,'faces',obj.hmObj.scalp.faces,'facecolor',skinColor,...
-                'facelighting','phong','LineStyle','none','FaceAlpha',.25,'Parent',obj.hAxes);
-            
+                'facelighting','phong','LineStyle','none','FaceAlpha',.45,'Parent',obj.hAxes);
+            colormap(jet(length(obj.hmObj.atlas.label)))
             camlight(0,180)%,'infinite') gouraud
             camlight(0,0)
             view(obj.hAxes,[90 0]);
@@ -176,18 +176,13 @@ classdef headModelViewerHandle < handle
         function output_txt = showLabel(obj,event_obj, storeLabel)
             if strcmp(obj.dcmHandle.Enable,'off'),return;end
             if nargin < 3, storeLabel = true;end
-            if isempty(obj.DT)
-                vertices = obj.hmObj.cortex.vertices;
-                obj.DT = delaunayTriangulation(vertices(:,1),vertices(:,2),vertices(:,3));
-            end
             pos = get(event_obj,'Position');
-            loc = nearestNeighbor(obj.DT, pos);
+            [~,~,loc] = geometricTools.nearestNeighbor(pos,obj.hmObj.cortex.vertices);
             try
                 output_txt = obj.hmObj.atlas.label{obj.hmObj.atlas.colorTable(loc)};
             catch
                 output_txt = 'No labeled';
-            end
-            
+            end            
             % store label in cell array
             if storeLabel, obj.roiLabels = unique([obj.roiLabels(:); output_txt]);end
         end

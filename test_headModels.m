@@ -1,15 +1,18 @@
-clear all
 close all
-addpath(genpath('/home/ale/Projects/headModel/'))
+clear all
+clc
+
+% Add this folder and dependencies to the path
+addpath(genpath('pwd'))
 
 %%
-hm = headModel.loadFromFile('/home/ale/Projects/rsc/resources/head_modelColin27_2003_xyz_Standard-10-5-Cap346.mat');
+hm = headModel.loadFromFile('resources/head_modelColin27_5003_xyz_Standard-10-5-Cap339.mat');
 hm.plot();
 %%
-snr = 10;
-Nx = size(hm.cortex.vertices,1);
-Nt = 100;
-x0 = hm.cortex.vertices(unidrnd(Nx, Nt,1),:);
+snr = 10;                           % Signal to noise ratio
+Nx = size(hm.cortex.vertices,1);    % Number of sources
+Nt = 100;                           % Number of simulated samples
+x0 = hm.cortex.vertices(unidrnd(Nx, Nt,1),:);   % Center of simulated sources
 
 % Open the surface by the Corpus Callosum (unlabeled vertices)
 rmIndices = find(hm.atlas.colorTable==0);
@@ -54,11 +57,13 @@ for k=1:Nt
     % Collect solutions for visualization
     Jall = [Jall J Jhat];
 end
+% 100x to convert to cm
+err = 100*err;
 %%
 yall = Kstd*Jall(I,:);
 hm.plotOnModel(Jall,yall,'',true);
-figure;subplot(121);plot(err);subplot(122);hist(err,20)
-
-% 100x to convert to cm
-100*[median(err) mean(err) std(err)]
+figure;
+subplot(121);plot(err);ylabel('Localization error (cm)'); xlabel('')
+subplot(122);hist(err,20); xlabel('Localization error (cm)')
+[median(err) mean(err) std(err)]
 

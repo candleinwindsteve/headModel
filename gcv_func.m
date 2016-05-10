@@ -33,7 +33,7 @@ end
 
 %---
 function indmin = getMinima(x)
-fminor = diff(x)>=1e-6;
+fminor = diff(x)>=1e-12;
 fminor = ~fminor(1:end-1, :) & fminor(2:end, :);
 fminor = [0; fminor; 0];
 indmin = find(fminor);
